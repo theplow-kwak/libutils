@@ -1,9 +1,7 @@
 #include <filesystem>
-#include <regex>
-#include <iostream>
+include <iostream>
 #include <string>
 #include <vector>
-#include <set>
 #include <unordered_set>
 #include <sstream>
 #include <iomanip>
@@ -12,8 +10,9 @@
 #include <algorithm>
 #ifdef _WIN32
 #include <windows.h>
-#endif
+#else
 #include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -46,6 +45,7 @@ static StringT from_utf8(const std::string &s)
 #ifdef _WIN32
         return utf8_to_wstring(s);
 #else
+        // Non-Windows: Assume locale is UTF-8 compatible or direct conversion is fine.
         return StringT{s.begin(), s.end()};
 #endif
     }
@@ -82,28 +82,10 @@ static std::string pad_num(int n, int width = 6)
 
 struct Config
 {
-    fs::path target_dir = fs::current_path();
+    fs::path source_dir = fs::current_path();
+    fs::path dest_dir;
     bool dry_run = false;
 };
-
-Config parse_args(int argc, char **argv)
-{
-    Config cfg;
-    for (int i = 1; i < argc; ++i)
-    {
-        std::string a = argv[i];
-        if (a == "--dry-run")
-            cfg.dry_run = true;
-        else if (a == "-h" || a == "--help")
-        {
-            std::cout << "Usage: " << (argv[0] ? argv[0] : "libpath") << " [dir] [--dry-run]\n";
-            std::exit(0);
-        }
-        else
-            cfg.target_dir = fs::path(a);
-    }
-    return cfg;
-}
 
 // ------------------------
 // FileList 클래스: 파일 수집 및 정렬 책임
@@ -117,9 +99,14 @@ public:
     {
         std::vector<fs::path> paths;
         paths.reserve(128);
-        for (auto &e : fs::directory_iterator(dir_))
+        std::error_code ec;
+        for (auto &e : fs::directory_iterator(dir_, ec))
         {
-            if (!e.is_regular_file())
+            if (ec) {
+                print_error_msg("Error iterating source directory: " + ec.message());
+                break;
+            }
+            if (!e.is_regular_file(ec))
                 continue;
             paths.push_back(e.path());
         }
@@ -190,6 +177,7 @@ static StringT strip_trailing_number_tags(const StringT &s)
         auto pos = res.find_last_of(static_cast<char_t>('['));
         if (pos == StringT::npos || pos + 1 >= res.size() - 1)
             break;
+        
         bool all_digits = true;
         for (size_t i = pos + 1; i < res.size() - 1; ++i)
         {
@@ -202,7 +190,7 @@ static StringT strip_trailing_number_tags(const StringT &s)
         }
         if (!all_digits)
             break;
-        // remove trailing "[digits]"
+        
         res.erase(pos);
     }
     return res;
@@ -215,19 +203,20 @@ template <typename StringT>
 class NameTransformer
 {
 public:
-    explicit NameTransformer(const Config &cfg) {}
+    explicit NameTransformer(fs::path dir) : dir_(dir) {}
 
-    // 주어진 파일 경로 p와 할당된 번호 assigned에 대해 새 경로를 반환
     fs::path transform(const fs::path &p, int assigned) const
     {
-        // 기존 stem에서 모든 후행 태그를 제거한 기반 이름(base)을 사용
         StringT name = path_stem(p);
         StringT base = strip_trailing_number_tags<StringT>(name);
         StringT ext = path_ext(p);
-        std::string tag8 = "[" + pad_num(assigned) + "]";
-        StringT tag = from_utf8<StringT>(tag8);
-        fs::path parent = p.parent_path();
-        return parent / fs::path(base + tag + ext);
+        
+        StringT tag;
+        if (assigned >= 0) {
+            tag = from_utf8<StringT>("[" + pad_num(assigned) + "]");
+        }
+        
+        return dir_ / fs::path(base + tag + ext);
     }
 
 private:
@@ -245,6 +234,7 @@ private:
         else
             return p.has_extension() ? p.extension().string() : StringT{};
     }
+    fs::path dir_;
 };
 
 // ------------------------
@@ -260,48 +250,52 @@ static StringT path_stem_generic(const fs::path &p)
 }
 
 // ------------------------
-// process_iteration: 한 번의 collect -> transform -> copy 수행, 처리된 파일 수 반환
-// 변경: entries/used 제거. paths를 바로 순회하며 각 파일별로 tag+1 또는 cfg.start_num부터 시도.
+// process_iteration: 최적화된 파일 처리 로직
 // ------------------------
 template <typename StringT>
 int process_iteration(const Config &cfg)
 {
-    FileList collector(cfg.target_dir);
+    // 목적지 디렉토리의 파일 목록을 미리 스캔하여 메모리 내 세트에 저장 (성능 최적화)
+    std::unordered_set<fs::path> dest_paths;
+    if (fs::exists(cfg.dest_dir)) {
+        std::error_code ec;
+        for (const auto& entry : fs::directory_iterator(cfg.dest_dir, ec)) {
+            if (ec) {
+                print_error_msg("Failed to iterate destination directory: " + ec.message());
+                break;
+            }
+            if (entry.is_regular_file(ec)) {
+                dest_paths.insert(entry.path());
+            }
+        }
+    }
+
+    FileList collector(cfg.source_dir);
     auto paths = collector.collect_sorted();
 
-    NameTransformer<StringT> transformer(cfg);
+    NameTransformer<StringT> transformer(cfg.dest_dir);
     int processed_count = 0;
 
     for (const auto &p : paths)
     {
-        // 현재 파일의 stem과 기존 tag 확인
         StringT stem = path_stem_generic<StringT>(p);
         auto tag_opt = extract_trailing_number_tag_generic<StringT>(stem);
-
-        // 파일별 시작 번호: 기존 태그가 있으면 tag+1, 없으면 0 으로 고정
         int assigned = tag_opt ? (*tag_opt + 1) : 0;
+
         fs::path candidate;
-
-        // candidate 가 파일시스템에 없을 때까지 증가
-        for (;;)
-        {
-            candidate = transformer.transform(p, assigned);
-
-            std::error_code ec;
-            bool exists = fs::exists(candidate, ec);
-            if (ec)
-            {
-                // I/O 에러: 로그 후 다음 번호 시도
-                print_error_msg(std::string("fs::exists error: ") + ec.message());
-                ++assigned;
-                continue;
-            }
-            if (!exists)
-                break; // 사용 가능한 후보 발견
-            ++assigned;
+        if (tag_opt) {
+            // 원본에 태그가 있으면, 다음 번호부터 바로 탐색 시작
+            candidate = transformer.transform(p, assigned++);
+        } else {
+            // 태그가 없으면, 태그 없는 기본 이름부터 확인
+            candidate = transformer.transform(p, -1);
         }
 
-        // 복사 수행 (dry-run이면 출력만)
+        // fs::exists 대신 메모리 내 세트를 사용하여 충돌 확인
+        while (dest_paths.count(candidate)) {
+            candidate = transformer.transform(p, assigned++);
+        }
+
         print_path_pair(p, candidate);
         if (!cfg.dry_run)
         {
@@ -309,13 +303,46 @@ int process_iteration(const Config &cfg)
             fs::copy_file(p, candidate, fs::copy_options::skip_existing, ec);
             if (ec)
             {
-                print_error_msg(std::string("copy failed: ") + ec.message());
+                print_error_msg(std::string("copy failed for '" ) + p.string() + "': " + ec.message());
             }
         }
+        
+        // 현재 처리에서 사용된 이름을 세트에 추가하여 중복 방지
+        dest_paths.insert(candidate);
         ++processed_count;
     }
 
     return processed_count;
+}
+
+Config parse_args(int argc, char **argv)
+{
+    Config cfg;
+    for (int i = 1; i < argc; ++i)
+    {
+        std::string a = argv[i];
+        if (a == "--dry-run") {
+            cfg.dry_run = true;
+        } else if (a == "-s" || a == "--source") {
+            if (i + 1 < argc) {
+                cfg.source_dir = fs::path(argv[++i]);
+            } else {
+                print_error_msg("Error: --source requires an argument.");
+                std::exit(1);
+            }
+        } else if (a == "-d" || a == "--dest") {
+            if (i + 1 < argc) {
+                cfg.dest_dir = fs::path(argv[++i]);
+            } else {
+                print_error_msg("Error: --dest requires an argument.");
+                std::exit(1);
+            }
+        } else if (a == "-h" || a == "--help") {
+            std::cout << "Usage: " << (argv[0] ? argv[0] : "libpath") << " [--source <dir>] [--dest <dir>] [--dry-run]\n";
+            std::exit(0);
+        }
+    }
+    return cfg;
 }
 
 // ------------------------
@@ -325,15 +352,27 @@ int main(int argc, char **argv)
 {
     Config cfg = parse_args(argc, argv);
 
-    if (!fs::exists(cfg.target_dir) || !fs::is_directory(cfg.target_dir))
+    if (!fs::exists(cfg.source_dir) || !fs::is_directory(cfg.source_dir))
     {
-        print_error_msg(std::string("Target is not a directory: ") + cfg.target_dir.string());
+        print_error_msg(std::string("Target is not a directory: ") + cfg.source_dir.string());
         return 1;
     }
+    if (cfg.dest_dir.empty())
+        cfg.dest_dir = cfg.source_dir;
+    
+    if (!fs::exists(cfg.dest_dir)) {
+        std::error_code ec;
+        fs::create_directories(cfg.dest_dir, ec);
+        if (ec) {
+            print_error_msg("Failed to create destination directory: " + ec.message());
+            return 1;
+        }
+    }
 
-    // 반복: collect -> per-file transform/copy -> collect again (새로 추가된 파일 포함)
-    const int max_iterations = 10; // 안전 장치: 필요 시 조정
-    for (int iter = 0; iter < max_iterations; ++iter)
+    static constexpr int MAX_ITERATIONS = 10; // 안전 장치
+    static constexpr int SLEEP_SECONDS = 5;   // 반복 간 대기 시간
+
+    for (int iter = 0; iter < MAX_ITERATIONS; ++iter)
     {
 #ifdef _WIN32
         std::wcout << L"Iteration: " << iter + 1 << L'\n';
@@ -349,11 +388,19 @@ int main(int argc, char **argv)
         {
             processed = process_iteration<std::string>(cfg);
         }
-        if (processed == 0)
-            break; // 종료 조건: 이번 반복에서 처리된 파일이 없음
+        if (processed == 0) {
+            std::cout << "No files to process. Exiting.\n";
+            break;
+        }
 
         std::cout << "Processed files in this iteration: " << processed << "\n\n";
-        sleep(5); // 5초 대기
+        if (iter < MAX_ITERATIONS - 1) {
+#ifdef _WIN32
+            Sleep(SLEEP_SECONDS * 1000);
+#else
+            sleep(SLEEP_SECONDS);
+#endif
+        }
     }
 
     return 0;
