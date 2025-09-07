@@ -22,10 +22,8 @@ using os_string_t = std::wstring;
 using os_string_t = std::string;
 #endif
 
-// --- Platform-specific string conversion ---
 #ifdef _WIN32
-// Windows-specific: Helper to convert UTF-8 string to wstring
-static std::wstring utf8_to_wstring(const std::string &s)
+static os_string_t from_utf8(const std::string &s)
 {
     if (s.empty())
         return {};
@@ -36,22 +34,13 @@ static std::wstring utf8_to_wstring(const std::string &s)
     MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &wstr[0], size_needed);
     return wstr;
 }
-
-// On Windows, convert UTF-8 to the OS native wstring
-static os_string_t from_utf8(const std::string &s)
-{
-    return utf8_to_wstring(s);
-}
-
 #else
-// On non-Windows, assume UTF-8 is the OS native encoding
 static os_string_t from_utf8(const std::string &s)
 {
     return s;
 }
 #endif
 
-// All print functions now use std::string and UTF-8
 static void print_path_pair(const fs::path &oldp, const fs::path &newp)
 {
     std::cout << reinterpret_cast<const char *>(oldp.u8string().c_str())
@@ -78,50 +67,39 @@ struct Config
     bool dry_run = false;
 };
 
-// ------------------------
-// FileList 클래스: 파일 수집 및 정렬 책임
-// ------------------------
-class FileList
+static std::vector<fs::path> collect_files(const fs::path &dir)
 {
-public:
-    explicit FileList(const fs::path &dir) : dir_(dir) {}
-
-    std::vector<fs::path> collect_sorted() const
+    std::vector<fs::path> paths;
+    paths.reserve(128);
+    std::error_code ec;
+    for (auto &e : fs::directory_iterator(dir, ec))
     {
-        std::vector<fs::path> paths;
-        paths.reserve(128);
-        std::error_code ec;
-        for (auto &e : fs::directory_iterator(dir_, ec))
+        if (ec)
         {
-            if (ec)
-            {
-                print_error_msg("Error iterating source directory: " + ec.message());
-                break;
-            }
-            if (!e.is_regular_file(ec))
-                continue;
-            paths.push_back(e.path());
+            print_error_msg("Error iterating source directory: " + ec.message());
+            break;
         }
-
-        // 결정론적 정렬 (OS별 native 비교)
-        std::sort(paths.begin(), paths.end(), [](const fs::path &a, const fs::path &b)
-                  {
-#ifdef _WIN32
-                      return a.wstring() < b.wstring();
-#else
-                      return a.string() < b.string();
-#endif
-                  });
-        return paths;
+        if (!e.is_regular_file(ec))
+            continue;
+        paths.push_back(e.path());
     }
+    return paths;
+}
 
-private:
-    fs::path dir_;
-};
+static std::vector<fs::path> collect_sorted_files(const fs::path &dir)
+{
+    auto paths = collect_files(dir);
+    std::sort(paths.begin(), paths.end(), [](const fs::path &a, const fs::path &b)
+              {
+#ifdef _WIN32
+                  return a.wstring() < b.wstring();
+#else
+                  return a.string() < b.string();
+#endif
+              });
+    return paths;
+}
 
-// ------------------------
-// extract_trailing_number_tag: 플랫폼 독립 함수
-// ------------------------
 static std::optional<int> extract_trailing_number_tag(const os_string_t &stem)
 {
     if (stem.size() < 3)
@@ -136,12 +114,15 @@ static std::optional<int> extract_trailing_number_tag(const os_string_t &stem)
     int end = static_cast<int>(stem.size()) - 1;
     if (start >= end)
         return std::nullopt;
-    for (int i = start; i < end; ++i)
+
+    auto start_it = stem.begin() + start;
+    auto end_it = stem.begin() + end;
+    if (!std::all_of(start_it, end_it, [](char_t c)
+                     { return c >= static_cast<char_t>('0') && c <= static_cast<char_t>('9'); }))
     {
-        char_t c = stem[i];
-        if (c < static_cast<char_t>('0') || c > static_cast<char_t>('9'))
-            return std::nullopt;
+        return std::nullopt;
     }
+
     try
     {
         return std::stoi(stem.substr(start, end - start));
@@ -163,7 +144,6 @@ static os_string_t strip_trailing_number_tags(const os_string_t &s)
         auto pos = res.find_last_of(static_cast<char_t>('['));
         if (pos == os_string_t::npos || pos + 1 >= res.size() - 1)
             break;
-
         auto start_it = res.begin() + pos + 1;
         auto end_it = res.end() - 1;
         if (!std::all_of(start_it, end_it, [](char_t c)
@@ -171,58 +151,11 @@ static os_string_t strip_trailing_number_tags(const os_string_t &s)
         {
             break;
         }
-
         res.erase(pos);
     }
     return res;
 }
 
-// ------------------------
-// NameTransformer: 단일 파일의 새로운 이름 문자열만 생성 (rename 하지 않음)
-// ------------------------
-class NameTransformer
-{
-public:
-    explicit NameTransformer(fs::path dir) : dir_(dir) {}
-
-    fs::path transform(const fs::path &p, int assigned)
-    {
-        os_string_t name = path_stem(p);
-        os_string_t base = strip_trailing_number_tags(name);
-        os_string_t ext = path_ext(p);
-
-        os_string_t tag;
-        if (assigned >= 0)
-        {
-            tag = from_utf8("[" + pad_num(assigned) + "]");
-        }
-
-        return dir_ / fs::path(base + tag + ext);
-    }
-
-private:
-    static os_string_t path_stem(const fs::path &p)
-    {
-#ifdef _WIN32
-        return p.stem().wstring();
-#else
-        return p.stem().string();
-#endif
-    }
-    static os_string_t path_ext(const fs::path &p)
-    {
-#ifdef _WIN32
-        return p.has_extension() ? p.extension().wstring() : os_string_t{};
-#else
-        return p.has_extension() ? p.extension().string() : os_string_t{};
-#endif
-    }
-    fs::path dir_;
-};
-
-// ------------------------
-// 유틸: path의 stem을 os_string_t로 반환
-// ------------------------
 static os_string_t path_stem_generic(const fs::path &p)
 {
 #ifdef _WIN32
@@ -232,15 +165,19 @@ static os_string_t path_stem_generic(const fs::path &p)
 #endif
 }
 
-// ------------------------
-// process_iteration: 최적화된 파일 처리 로직
-// ------------------------
+static os_string_t path_ext_generic(const fs::path &p)
+{
+#ifdef _WIN32
+    return p.has_extension() ? p.extension().wstring() : os_string_t{};
+#else
+    return p.has_extension() ? p.extension().string() : os_string_t{};
+#endif
+}
+
 int process_iteration(const Config &cfg)
 {
-    FileList collector(cfg.source_dir);
-    auto paths = collector.collect_sorted();
+    auto paths = collect_sorted_files(cfg.source_dir);
 
-    // 메모리 최적화: 소스와 목적지 디렉토리가 같으면 파일 목록을 한 번만 사용
     std::unordered_set<fs::path> dest_paths;
     if (cfg.source_dir == cfg.dest_dir)
     {
@@ -248,38 +185,34 @@ int process_iteration(const Config &cfg)
     }
     else
     {
-        // 목적지 디렉토리가 다를 경우, 해당 디렉토리를 스캔
         if (fs::exists(cfg.dest_dir))
         {
-            std::error_code ec;
-            for (const auto &entry : fs::directory_iterator(cfg.dest_dir, ec))
-            {
-                if (ec)
-                {
-                    print_error_msg("Failed to iterate destination directory: " + ec.message());
-                    break;
-                }
-                if (entry.is_regular_file(ec))
-                {
-                    dest_paths.insert(entry.path());
-                }
-            }
+            auto dest_files = collect_files(cfg.dest_dir);
+            dest_paths.insert(dest_files.begin(), dest_files.end());
         }
     }
 
-    NameTransformer transformer(cfg.dest_dir);
     int processed_count = 0;
 
     for (const auto &p : paths)
     {
         os_string_t stem = path_stem_generic(p);
+        os_string_t base_stem = strip_trailing_number_tags(stem);
+        os_string_t ext = path_ext_generic(p);
+
         auto tag_opt = extract_trailing_number_tag(stem);
         int assigned = tag_opt ? (*tag_opt + 1) : -1;
 
         fs::path candidate;
         do
         {
-            candidate = transformer.transform(p, assigned++);
+            os_string_t tag;
+            if (assigned >= 0)
+            {
+                tag = from_utf8("[" + pad_num(assigned) + "]");
+            }
+            candidate = cfg.dest_dir / fs::path(base_stem + tag + ext);
+            assigned++;
         } while (dest_paths.count(candidate));
 
         print_path_pair(p, candidate);
@@ -294,7 +227,6 @@ int process_iteration(const Config &cfg)
             }
         }
 
-        // 현재 처리에서 사용된 이름을 세트에 추가하여 중복 방지
         dest_paths.insert(candidate);
         ++processed_count;
     }
