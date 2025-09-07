@@ -1,11 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: 기본값은 op_copy.cpp
 set PARAM=%1
 if "%PARAM%"=="" set PARAM=op_copy.cpp
 
-:: 파일명과 확장자 분리
 for %%F in (%PARAM%) do (
     set fname=%%~nF
     set ext=%%~xF
@@ -13,7 +11,10 @@ for %%F in (%PARAM%) do (
 
 if "%ext%"=="" set ext=.cpp
 
-:: cl.exe 실행
+if /I "%fname%"=="offset2lba" (
+    cl.exe /EHsc /W4 /O2 /Fe:offset2lba.exe offset2lba.cpp offset2lba_windows.cpp
+   goto :EOF
+)
 cl /std:c++20 /W4 /Zi /Od /MT /Fe:%fname%.exe %fname%%ext%
 
 endlocal
