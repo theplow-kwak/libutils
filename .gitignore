@@ -3,8 +3,6 @@
 *.app
 *.g.xlf
 *.flf
-TestResults.xml
-
 *.exe
 *.dll
 *.pdb
@@ -15,3 +13,7 @@ TestResults.xml
 *.temp
 *.bak
 *.old
+*.obj
+*.lib
+
+TestResults.xml
