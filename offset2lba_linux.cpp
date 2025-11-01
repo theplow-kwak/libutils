@@ -27,8 +27,8 @@ struct FileDescriptor
     }
 
     // Prevent copying
-    FileDescriptor(const FileDescriptor&) = delete;
-    FileDescriptor& operator=(const FileDescriptor&) = delete;
+    FileDescriptor(const FileDescriptor &) = delete;
+    FileDescriptor &operator=(const FileDescriptor &) = delete;
 
     operator int() const { return fd; }
 };
@@ -40,14 +40,12 @@ constexpr int DEFAULT_SECTOR_SIZE = 512;
 std::pair<std::vector<char>, struct stat> get_fiemap_data(const char *filepath, off_t offset);
 void calculate_and_print_lba(const struct fiemap *fiemap_data, const struct stat &st, const char *filepath, off_t offset);
 
-
-
 // Main function to coordinate LBA calculation.
-void get_lba(const char *filepath, off_t offset)
+void get_lba(fs::path &filepath, off_t offset)
 {
-    auto [fiemap_buffer, st] = get_fiemap_data(filepath, offset);
+    auto [fiemap_buffer, st] = get_fiemap_data(filepath.generic_string().c_str(), offset);
     const struct fiemap *fiemap_data = reinterpret_cast<const struct fiemap *>(fiemap_buffer.data());
-    calculate_and_print_lba(fiemap_data, st, filepath, offset);
+    calculate_and_print_lba(fiemap_data, st, filepath.generic_string().c_str(), offset);
 }
 
 // Gets fiemap data for a given offset.

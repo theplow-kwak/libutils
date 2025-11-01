@@ -8,13 +8,21 @@ for %%F in (%PARAM%) do (
     set fname=%%~nF
     set ext=%%~xF
 )
-
 if "%ext%"=="" set ext=.cpp
 
 if /I "%fname%"=="offset2lba" (
-    cl.exe /EHsc /W4 /O2 /Fe:offset2lba.exe offset2lba.cpp offset2lba_windows.cpp
-   goto :EOF
+    set libs=offset2lba_windows.cpp
+    set cflags=/DUNICODE /D_UNICODE
 )
-cl /std:c++20 /W4 /Zi /Od /MT /Fe:%fname%.exe %fname%%ext%
+if /I "%fname%"=="fs_trans" (
+    set libs=file_translation.cpp
+    set cflags=/DUNICODE /D_UNICODE
+)
+if /I "%fname%"=="pcispace" (
+    set libs=setupapi.lib cfgmgr32.lib wbemuuid.lib
+)
+
+echo cl /std:c++20 /EHsc /W4 /Zi /Od /MT %cflags% /Fe:%fname%.exe %fname%%ext% %libs%
+cl /std:c++20 /EHsc /W4 /Zi /Od /MT %cflags% /Fe:%fname%.exe %fname%%ext% %libs%
 
 endlocal
