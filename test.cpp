@@ -3,6 +3,9 @@
 #include <thread>
 #include <locale>
 
+// Use the argparse namespace
+using namespace argparse;
+
 std::string formatWithCommas(unsigned long number)
 {
     std::string number_str = std::to_string(number);
@@ -20,9 +23,9 @@ int main(int argc, char *argv[])
     parser.add_positional("command", "Command to excute.", true);
     parser.add_positional("source", "Source file or device path.", true);
     parser.add_option("-time", "-t", "test time (unit: min)", false, "2");
-    // parser.add_option("--src", "-s", "source directory path", true);
     parser.add_option("--dest", "-d", "destination directory path", true);
     parser.add_option("--thread", "-T", "thread count", false, "5");
+    parser.add_option("--offset", "-o", "Start offset in hex for test", false, "0x1000"); // New option for hex test
     parser.add_flag("--test", "", "for test. used time unit as minute");
     parser.add_option("--log", "-L", "log level", false, "INFO");
     if (!parser.parse(argc, argv))
@@ -32,17 +35,23 @@ int main(int argc, char *argv[])
 
     auto cmd = parser.get_positional("command").value();
     auto source = parser.get_positional("source").value();
-    // auto source = parser.get("src").value();
     std::vector<std::string> destlist = parser.get_list("dest").value_or(std::vector<std::string>{});
-    auto multithread = std::stoi(parser.get("thread").value());
+    
+    // Use new get<T> for type conversion
+    auto multithread = parser.get<int>("thread").value_or(1);
     auto test = parser.is_set("test");
-    auto nTestTime = std::stoi(parser.get("time").value_or("1")) * ((test) ? 1 : 60);
+    auto nTestTime = parser.get<int>("time").value_or(1) * ((test) ? 1 : 60);
+    
+    // Test hex parsing
+    auto offset = parser.get<long>("offset").value_or(0);
+    
     auto log_level = parser.get("log").value();
     logger.set_level(log_level);
 
     logger.info("Source: {:>10}", source);
     LOG_INFO(logger, "Destination: {}", parser.get("dest").value());
     logger.info("Thread count: {}", multithread);
+    logger.info("Offset: {:#x}", offset); // Log the parsed hex value
     logger.info("Test mode: {}", test ? "enabled" : "disabled");
     logger.info("Test time: {} minutes", formatWithCommas(nTestTime).c_str());
     printf("Test time: {%s} minutes\n", formatWithCommas(nTestTime).c_str());
