@@ -15,7 +15,7 @@
             "name": "C/C++: cl.exe luncher active file",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${fileDirname}\\${fileBasenameNoExtension}.exe",
+            "program": "${fileDirname}\\build\\${fileBasenameNoExtension}.exe",
             "args": ["list", "nvme", "--dest", "d:\\"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
