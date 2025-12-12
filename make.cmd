@@ -14,8 +14,7 @@ if "%ext%"=="" set ext=.cpp
 
 if not exist build mkdir build
 
-set CMD_OPTS=/EHsc /std:c++20 /W4 /Zi 
-@REM /O2 /MT 
+set CMD_OPTS=/EHsc /std:c++20 /W4 /Zi /O2 /MT 
 set FILES=%fname%%ext%
 
 if /I "%fname%"=="offset2lba" (

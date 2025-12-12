@@ -33,8 +33,7 @@ int main(int argc, char *argv[])
     auto cmd = parser.get_positional("command").value();
     auto source = parser.get_positional("source").value();
     // auto source = parser.get("src").value();
-    std::vector<std::string> destlist = split(parser.get("dest").value(), ',');
-    auto dest_count = destlist.size();
+    std::vector<std::string> destlist = parser.get_list("dest").value_or(std::vector<std::string>{});
     auto multithread = std::stoi(parser.get("thread").value());
     auto test = parser.is_set("test");
     auto nTestTime = std::stoi(parser.get("time").value_or("1")) * ((test) ? 1 : 60);
@@ -47,7 +46,7 @@ int main(int argc, char *argv[])
     logger.info("Test mode: {}", test ? "enabled" : "disabled");
     logger.info("Test time: {} minutes", formatWithCommas(nTestTime).c_str());
     printf("Test time: {%s} minutes\n", formatWithCommas(nTestTime).c_str());
-    logger.debug("Destination count: {:04d}", dest_count);
+    logger.debug("Destination count: {:04d}", destlist.size());
     for (const auto &dest : destlist)
     {
         LOG_DEBUG(logger, "Destination path: {}", dest);

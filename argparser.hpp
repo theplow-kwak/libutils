@@ -43,9 +43,9 @@ public:
         size_t index = options_.size();
         options_.push_back({long_name, short_name, help, default_value.empty() ? std::nullopt : std::make_optional(default_value), std::nullopt, required, false});
         if (!long_name.empty())
-            option_map_[strip(long_name)] = index;
+            option_map_[std::string(strip(long_name))] = index;
         if (!short_name.empty())
-            option_map_[strip(short_name)] = index;
+            option_map_[std::string(strip(short_name))] = index;
     }
 
     void add_flag(const std::string &long_name, const std::string &short_name = "", const std::string &help = "")
@@ -53,9 +53,9 @@ public:
         size_t index = options_.size();
         options_.push_back({long_name, short_name, help, std::nullopt, std::nullopt, false, true});
         if (!long_name.empty())
-            option_map_[strip(long_name)] = index;
+            option_map_[std::string(strip(long_name))] = index;
         if (!short_name.empty())
-            option_map_[strip(short_name)] = index;
+            option_map_[std::string(strip(short_name))] = index;
     }
 
     // Add a positional argument with optional help, required flag, and default value
@@ -88,7 +88,7 @@ public:
                     arg_val = arg.substr(equals_pos + 1);
                 }
 
-                auto it = option_map_.find(strip(arg_name));
+                auto it = option_map_.find(std::string(strip(arg_name)));
                 if (it != option_map_.end())
                 {
                     Option &opt = options_[it->second];
@@ -178,6 +178,26 @@ public:
                 return opt.value;
         }
         return std::nullopt;
+    }
+
+    std::optional<std::vector<std::string>> get_list(const std::string &name, char delimiter = ',') const
+    {
+        auto value_opt = get(name);
+        if (!value_opt)
+        {
+            return std::nullopt;
+        }
+        std::vector<std::string> tokens;
+        std::string token;
+        std::istringstream tokenStream(*value_opt);
+        while (std::getline(tokenStream, token, delimiter))
+        {
+            if (!token.empty())
+            {
+                tokens.push_back(token);
+            }
+        }
+        return tokens;
     }
 
     bool is_set(const std::string &name) const
@@ -283,19 +303,7 @@ private:
 
     std::string description_;
     std::vector<Option> options_;
-    std::unordered_map<std::string_view, size_t> option_map_;
+    std::unordered_map<std::string, size_t> option_map_;
     std::vector<Positional> positional_defs_;
     std::vector<std::string> positional_args_;
 };
-
-inline std::vector<std::string> split(const std::string &s, char delimiter)
-{
-    std::vector<std::string> tokens;
-    std::string token;
-    std::istringstream tokenStream(s);
-    while (std::getline(tokenStream, token, delimiter))
-    {
-        tokens.push_back(token);
-    }
-    return tokens;
-}
