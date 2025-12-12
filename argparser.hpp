@@ -1,14 +1,38 @@
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unordered_map>
 #include <optional>
 #include <algorithm>
 #include <unordered_set>
 #include <iomanip>
+#include <sstream>
 
 class ArgParser
 {
+private:
+    // Option structure for named arguments
+    struct Option
+    {
+        std::string long_name;
+        std::string short_name;
+        std::string help;
+        std::optional<std::string> default_value;
+        std::optional<std::string> value;
+        bool required;
+        bool is_flag; // True if it's a flag, false if it's an option with a value
+    };
+    // Positional argument structure
+    struct Positional
+    {
+        std::string name;
+        std::string help;
+        bool required;
+        std::optional<std::string> value;
+        std::optional<std::string> default_value;
+    };
+
 public:
     ArgParser(const std::string &desc = "") : description_(desc) {}
 
@@ -16,25 +40,28 @@ public:
 
     void add_option(const std::string &long_name, const std::string &short_name = "", const std::string &help = "", bool required = false, const std::string &default_value = "")
     {
-        Option opt{help, required, std::nullopt, long_name, short_name, default_value.empty() ? std::nullopt : std::make_optional(default_value)};
+        size_t index = options_.size();
+        options_.push_back({long_name, short_name, help, default_value.empty() ? std::nullopt : std::make_optional(default_value), std::nullopt, required, false});
         if (!long_name.empty())
-            option_map_[long_name] = opt;
+            option_map_[strip(long_name)] = index;
         if (!short_name.empty())
-            option_map_[short_name] = opt;
+            option_map_[strip(short_name)] = index;
     }
 
     void add_flag(const std::string &long_name, const std::string &short_name = "", const std::string &help = "")
     {
+        size_t index = options_.size();
+        options_.push_back({long_name, short_name, help, std::nullopt, std::nullopt, false, true});
         if (!long_name.empty())
-            flag_map_[long_name] = help;
+            option_map_[strip(long_name)] = index;
         if (!short_name.empty())
-            flag_map_[short_name] = help;
+            option_map_[strip(short_name)] = index;
     }
 
     // Add a positional argument with optional help, required flag, and default value
     void add_positional(const std::string &name, const std::string &help = "", bool required = false, const std::string &default_value = "")
     {
-        positional_defs_.emplace_back(Positional{name, help, required, default_value.empty() ? std::nullopt : std::make_optional(default_value)});
+        positional_defs_.emplace_back(Positional{name, help, required, std::nullopt, default_value.empty() ? std::nullopt : std::make_optional(default_value)});
     }
 
     // Parse command line arguments. Returns true if parsing is successful, false otherwise.
@@ -43,30 +70,53 @@ public:
         size_t pos_idx = 0;
         for (int i = 1; i < argc; ++i)
         {
-            std::string arg = argv[i];
+            std::string_view arg = argv[i];
             if (arg == "--help" || arg == "-h")
             {
-                // Print help and exit immediately if help option is provided
                 print_help(argv[0]);
-                return false;
+                return false; // Early exit for help
             }
-            if (flag_map_.count(arg))
+
+            if (arg[0] == '-')
             {
-                parsed_flags_.insert(arg);
-            }
-            else if (option_map_.count(arg))
-            {
-                if (i + 1 < argc)
+                std::string_view arg_name = arg;
+                std::optional<std::string_view> arg_val;
+
+                if (size_t equals_pos = arg.find('='); equals_pos != std::string_view::npos)
                 {
-                    option_map_[arg].value = argv[++i];
-                    if (!option_map_[arg].long_name.empty())
-                        option_map_[option_map_[arg].long_name].value = option_map_[arg].value;
-                    if (!option_map_[arg].short_name.empty())
-                        option_map_[option_map_[arg].short_name].value = option_map_[arg].value;
+                    arg_name = arg.substr(0, equals_pos);
+                    arg_val = arg.substr(equals_pos + 1);
+                }
+
+                auto it = option_map_.find(strip(arg_name));
+                if (it != option_map_.end())
+                {
+                    Option &opt = options_[it->second];
+                    if (opt.is_flag)
+                    {
+                        opt.value = "true";
+                    }
+                    else // Option with a value
+                    {
+                        if (arg_val.has_value())
+                        {
+                            opt.value = *arg_val;
+                        }
+                        else if (i + 1 < argc)
+                        {
+                            opt.value = argv[++i];
+                        }
+                        else
+                        {
+                            std::cerr << "Option '" << arg_name << "' requires a value.\n";
+                            print_help(argv[0]);
+                            return false;
+                        }
+                    }
                 }
                 else
                 {
-                    std::cerr << "Option '" << arg << "' requires a value.\n";
+                    std::cerr << "Unknown option: " << arg_name << "\n";
                     print_help(argv[0]);
                     return false;
                 }
@@ -79,12 +129,12 @@ public:
                 }
                 else
                 {
-                    positional_args_.push_back(arg);
+                    positional_args_.push_back(std::string(arg));
                 }
             }
         }
         // Set default values for options if not set
-        for (auto &[name, opt] : option_map_)
+        for (auto &opt : options_)
         {
             if (!opt.value.has_value() && opt.default_value.has_value())
                 opt.value = opt.default_value;
@@ -95,10 +145,10 @@ public:
             if (!pos.value.has_value() && pos.default_value.has_value())
                 pos.value = pos.default_value;
         }
-        // Check required options (only long name)
-        for (const auto &[name, opt] : option_map_)
+        // Check required options
+        for (const auto &opt : options_)
         {
-            if (!opt.long_name.empty() && opt.required && !opt.value.has_value())
+            if (opt.required && !opt.value.has_value())
             {
                 std::cerr << "Missing required option: " << opt.long_name << "\n\n";
                 print_help(argv[0]);
@@ -120,40 +170,24 @@ public:
 
     std::optional<std::string> get(const std::string &name) const
     {
-        // '--', '-' 접두어 없이도 찾을 수 있도록 처리
-        auto match = [&](const std::string &key, const Option &opt)
+        auto it = option_map_.find(name);
+        if (it != option_map_.end())
         {
-            if (key == name)
-                return true;
-            if (opt.long_name == name || opt.short_name == name)
-                return true;
-            // 접두어 제거 후 비교
-            auto strip = [](const std::string &s)
-            {
-                if (s.rfind("--", 0) == 0)
-                    return s.substr(2);
-                if (s.rfind("-", 0) == 0)
-                    return s.substr(1);
-                return s;
-            };
-            return strip(opt.long_name) == name || strip(opt.short_name) == name || strip(key) == name;
-        };
-        for (const auto &[k, v] : option_map_)
-        {
-            if (match(k, v))
-            {
-                if (v.value.has_value())
-                    return v.value;
-                if (v.default_value.has_value())
-                    return v.default_value;
-            }
+            const auto &opt = options_[it->second];
+            if (opt.value.has_value())
+                return opt.value;
         }
         return std::nullopt;
     }
 
     bool is_set(const std::string &name) const
     {
-        return parsed_flags_.count(name) > 0;
+        auto it = option_map_.find(name);
+        if (it != option_map_.end())
+        {
+            return options_[it->second].value.has_value();
+        }
+        return false;
     }
 
     const std::vector<std::string> &positional() const
@@ -208,40 +242,28 @@ public:
         }
         // --- Options & Flags ---
         std::cout << "Options:\n";
-        std::unordered_set<std::string> printed;
         std::vector<std::pair<std::string, std::string>> all_list;
         size_t maxlen = 0;
-        // Options
-        for (const auto &[name, opt] : option_map_)
+
+        for (const auto &opt : options_)
         {
-            if (!opt.long_name.empty() && printed.insert(opt.long_name).second)
-            {
-                std::string optstr = (opt.short_name.empty() ? "" : opt.short_name + ", ") + opt.long_name + " <value>";
-                std::string desc = opt.help;
-                if (opt.required)
-                    desc += " (required)";
-                if (opt.default_value.has_value())
-                    desc += " [default: " + *opt.default_value + "]";
-                all_list.emplace_back(optstr, desc);
-                maxlen = std::max(maxlen, optstr.size());
-            }
+            std::string optstr;
+            if (!opt.short_name.empty())
+                optstr += opt.short_name + ", ";
+            optstr += opt.long_name;
+            if (!opt.is_flag)
+                optstr += " <value>";
+
+            std::string desc = opt.help;
+            if (opt.required)
+                desc += " (required)";
+            if (opt.default_value.has_value())
+                desc += " [default: " + *opt.default_value + "]";
+
+            all_list.emplace_back(optstr, desc);
+            maxlen = std::max(maxlen, optstr.size());
         }
-        // Flags
-        printed.clear();
-        for (const auto &[name, help] : flag_map_)
-        {
-            if (name.size() == 2 && name[0] == '-' && printed.insert(name).second)
-                continue;
-            std::string short_flag;
-            for (const auto &[n, h] : flag_map_)
-            {
-                if (n.size() == 2 && n[0] == '-' && h == help)
-                    short_flag = n;
-            }
-            std::string flagstr = (short_flag.empty() ? "" : short_flag + ", ") + name;
-            all_list.emplace_back(flagstr, help);
-            maxlen = std::max(maxlen, flagstr.size());
-        }
+
         // Print all options and flags
         for (const auto &p : all_list)
         {
@@ -250,34 +272,23 @@ public:
     }
 
 private:
-    // Option structure for named arguments
-    struct Option
+    static std::string_view strip(std::string_view s)
     {
-        std::string help;
-        bool required;
-        std::optional<std::string> value;
-        std::string long_name;
-        std::string short_name;
-        std::optional<std::string> default_value;
+        if (s.rfind("--", 0) == 0)
+            return s.substr(2);
+        if (s.rfind("-", 0) == 0)
+            return s.substr(1);
+        return s;
     };
-    // Positional argument structure
-    struct Positional
-    {
-        std::string name;
-        std::string help;
-        bool required;
-        std::optional<std::string> value;
-        std::optional<std::string> default_value;
-    };
+
     std::string description_;
-    std::unordered_map<std::string, Option> option_map_;
-    std::unordered_map<std::string, std::string> flag_map_;
-    std::vector<std::string> positional_args_;
-    std::unordered_set<std::string> parsed_flags_;
+    std::vector<Option> options_;
+    std::unordered_map<std::string_view, size_t> option_map_;
     std::vector<Positional> positional_defs_;
+    std::vector<std::string> positional_args_;
 };
 
-std::vector<std::string> split(const std::string &s, char delimiter)
+inline std::vector<std::string> split(const std::string &s, char delimiter)
 {
     std::vector<std::string> tokens;
     std::string token;

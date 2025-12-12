@@ -1,19 +1,8 @@
-*.o
-*.al
-*.app
-*.g.xlf
-*.flf
-*.exe
-*.dll
-*.pdb
-*.cache
-*.ilk
-*.log
-*.tmp
-*.temp
-*.bak
-*.old
-*.obj
-*.lib
-
+# Ignore Visual Studio temporary files, build results, and
+# user-specific files
 TestResults.xml
+build/
+
+*.pdb
+*.exe
+*.ilk

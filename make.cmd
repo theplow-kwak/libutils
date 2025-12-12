@@ -1,6 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 
+if "%1"=="clean" goto clean
+
 set PARAM=%1
 if "%PARAM%"=="" set PARAM=op_copy.cpp
 
@@ -11,10 +13,23 @@ for %%F in (%PARAM%) do (
 
 if "%ext%"=="" set ext=.cpp
 
+if not exist build mkdir build
+
+set CMD_OPTS=/EHsc /std:c++20 /W4 /Zi 
+@REM /O2 /MT 
+set FILES=%fname%%ext%
+
 if /I "%fname%"=="offset2lba" (
-    cl.exe /EHsc /W4 /O2 /Fe:offset2lba.exe offset2lba.cpp offset2lba_windows.cpp
-   goto :EOF
+    set FILES=offset2lba.cpp offset2lba_windows.cpp
 )
-cl /std:c++20 /W4 /Zi /Od /MT /Fe:%fname%.exe %fname%%ext%
+
+cl.exe %CMD_OPTS% /Fo:build\ /Fd:build\%fname%.pdb /Fe:build\%fname%.exe %FILES%
+
+goto :EOF
+
+:clean
+if exist build rd /s /q build
+echo Cleaned build directory.
+goto :EOF
 
 endlocal
