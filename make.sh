@@ -6,7 +6,8 @@ ext=$(echo "$PARAM" | cut -s -d'.' -f2)
 ext=${ext:-"cpp"}
 
 if [ "$fname" = "offset2lba" ]; then
-    g++ -std=c++2a -Wall -g -O0 -static -o offset2lba offset2lba.cpp offset2lba_linux.cpp
-    exit $?
+    files="offset2lba_linux.cpp"
 fi
-g++ -std=c++2a -Wall -g -O0 -static -o $fname $fname.$ext
+
+echo g++ -std=c++2a -Wall -g -O0 -static -o $fname $fname.$ext $files
+g++ -std=c++2a -Wall -g -O0 -static -o $fname $fname.$ext $files

@@ -10,7 +10,6 @@ for %%F in (%PARAM%) do (
     set fname=%%~nF
     set ext=%%~xF
 )
-
 if "%ext%"=="" set ext=.cpp
 
 if not exist build mkdir build

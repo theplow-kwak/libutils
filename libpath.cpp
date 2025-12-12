@@ -8,6 +8,7 @@
 #include <optional>
 #include <type_traits>
 #include <algorithm>
+#include <set>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -176,9 +177,9 @@ static os_string_t path_ext_generic(const fs::path &p)
 
 int process_iteration(const Config &cfg)
 {
-    auto paths = collect_sorted_files(cfg.source_dir);
+    auto paths = collect_files(cfg.source_dir);
 
-    std::unordered_set<fs::path> dest_paths;
+    std::set<fs::path> dest_paths;
     if (cfg.source_dir == cfg.dest_dir)
     {
         dest_paths.insert(paths.begin(), paths.end());
@@ -197,12 +198,8 @@ int process_iteration(const Config &cfg)
     for (const auto &p : paths)
     {
         os_string_t stem = path_stem_generic(p);
-        os_string_t base_stem = strip_trailing_number_tags(stem);
         os_string_t ext = path_ext_generic(p);
-
-        auto tag_opt = extract_trailing_number_tag(stem);
-        int assigned = tag_opt ? (*tag_opt + 1) : -1;
-
+        int assigned = -1;
         fs::path candidate;
         do
         {
@@ -211,7 +208,7 @@ int process_iteration(const Config &cfg)
             {
                 tag = from_utf8("[" + pad_num(assigned) + "]");
             }
-            candidate = cfg.dest_dir / fs::path(base_stem + tag + ext);
+            candidate = cfg.dest_dir / fs::path(stem + tag + ext);
             assigned++;
         } while (dest_paths.count(candidate));
 
