@@ -1,4 +1,5 @@
 #include "offset2lba.hpp"
+#include "logger.hpp"
 
 #ifdef _WIN32
 
@@ -49,7 +50,7 @@ void get_lba(fs::path &filepath, off_t offset)
     {
         // 1. Get file handle and check offset
         std::wstring widePath = filepath.generic_wstring();
-        HandleWrapper fileHandle(CreateFile(widePath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL));
+        HandleWrapper fileHandle(CreateFileW(widePath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL));
         if (fileHandle.handle == INVALID_HANDLE_VALUE)
         {
             throw std::system_error(GetLastError(), std::system_category(), "Failed to open file");
@@ -77,12 +78,12 @@ void get_lba(fs::path &filepath, off_t offset)
     }
     catch (const std::system_error &e)
     {
-        std::cerr << "Error: " << e.what() << " (code: " << e.code() << ")" << std::endl;
+        LOG_ERROR("Error: {} (code: {})", e.what(), e.code().value());
         throw;
     }
     catch (const std::runtime_error &e)
     {
-        std::cerr << "Error: " << e.what() << std::endl;
+        LOG_ERROR("Error: {}", e.what());
         throw;
     }
 }
@@ -90,7 +91,7 @@ void get_lba(fs::path &filepath, off_t offset)
 VolumeInfo GetVolumeInfo(fs::path &filepath)
 {
     std::wstring volumePathW(MAX_PATH, L'\0');
-    if (!GetVolumePathName(filepath.c_str(), volumePathW.data(), static_cast<DWORD>(volumePathW.size())))
+    if (!GetVolumePathNameW(filepath.c_str(), volumePathW.data(), static_cast<DWORD>(volumePathW.size())))
     {
         throw std::system_error(GetLastError(), std::system_category(), "Failed to get volume path name");
     }
@@ -98,14 +99,14 @@ VolumeInfo GetVolumeInfo(fs::path &filepath)
     volumePathW.resize(wcsnlen_s(volumePathW.data(), MAX_PATH));
 
     DWORD sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters;
-    if (!GetDiskFreeSpace(volumePathW.c_str(), &sectorsPerCluster, &bytesPerSector, &numberOfFreeClusters, &totalNumberOfClusters))
+    if (!GetDiskFreeSpaceW(volumePathW.c_str(), &sectorsPerCluster, &bytesPerSector, &numberOfFreeClusters, &totalNumberOfClusters))
     {
         throw std::system_error(GetLastError(), std::system_category(), "Failed to get disk free space");
     }
 
     std::wstring volumeDevicePathW = L"\\\\.\\";
     volumeDevicePathW += volumePathW.substr(0, 2); // \\.\<drive>:
-    HandleWrapper volumeHandle(CreateFile(volumeDevicePathW.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL));
+    HandleWrapper volumeHandle(CreateFileW(volumeDevicePathW.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL));
     if (volumeHandle.handle == INVALID_HANDLE_VALUE)
     {
         throw std::system_error(GetLastError(), std::system_category(), "Failed to open volume");
@@ -179,15 +180,14 @@ void CalculateAndPrintLbaInfo(fs::path &filepath, off_t offset, const VolumeInfo
     LONGLONG diskAbsoluteOffset = volInfo.PartitionStartOffset.QuadPart + filePhysicalOffset;
     LONGLONG absoluteLba = diskAbsoluteOffset / volInfo.BytesPerSector;
 
-    std::cout << "File: " << to_ansi(filepath).c_str() << std::endl;
-    std::cout << "Offset: " << offset << std::endl;
-    std::cout << "----------------------------------------" << std::endl;
-    std::cout << "File System Cluster Size: " << volInfo.ClusterSize << " bytes" << std::endl;
-    std::cout << "Disk Sector Size: " << volInfo.BytesPerSector << " bytes" << std::endl;
-    std::cout << "Partition Start Offset: " << volInfo.PartitionStartOffset.QuadPart / volInfo.BytesPerSector << " (lba)" << std::endl;
-    // std::cout << "File Physical Offset (in volume): " << filePhysicalOffset / volInfo.BytesPerSector << " (lba)" << std::endl;
-    std::cout << "Absolute Offset on Disk: " << diskAbsoluteOffset << " (bytes)" << std::endl;
-    std::cout << "Absolute LBA on Disk: " << absoluteLba << std::endl;
+    LOG_INFO("File: {}", to_ansi(filepath).c_str());
+    LOG_INFO("Offset: {}", offset);
+    LOG_INFO("----------------------------------------");
+    LOG_INFO("File System Cluster Size: {} bytes", volInfo.ClusterSize);
+    LOG_INFO("Disk Sector Size: {} bytes", volInfo.BytesPerSector);
+    LOG_INFO("Partition Start Offset: {} (lba)", volInfo.PartitionStartOffset.QuadPart / volInfo.BytesPerSector);
+    LOG_INFO("Absolute Offset on Disk: {} (bytes)", diskAbsoluteOffset);
+    LOG_INFO("Absolute LBA on Disk: {}", absoluteLba);
 }
 
 #endif // _WIN32

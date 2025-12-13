@@ -1,4 +1,7 @@
 #include "offset2lba.hpp"
+#include "logger.hpp"
+
+#ifndef _WIN32
 
 #include <iostream>
 #include <vector>
@@ -88,7 +91,7 @@ long long get_partition_start_sector(dev_t dev_id)
     DIR *dir = opendir(sys_block_path.c_str());
     if (!dir)
     {
-        std::cerr << "Warning: Could not open /sys/class/block to find partition start." << std::endl;
+        LOG_WARNING("Could not open /sys/class/block to find partition start.");
         return 0;
     }
 
@@ -132,7 +135,7 @@ void calculate_and_print_lba(const struct fiemap *fiemap_data, const struct stat
 {
     if (fiemap_data->fm_mapped_extents == 0)
     {
-        std::cout << "Offset " << offset << " is not mapped to any physical block (sparse file?)." << std::endl;
+        LOG_INFO("Offset {} is not mapped to any physical block (sparse file?).", offset);
         return;
     }
 
@@ -143,12 +146,14 @@ void calculate_and_print_lba(const struct fiemap *fiemap_data, const struct stat
     long long partition_start_lba = get_partition_start_sector(st.st_dev);
     unsigned long long absolute_lba = fs_lba + partition_start_lba;
 
-    std::cout << "File: " << filepath << std::endl;
-    std::cout << "Offset: " << offset << std::endl;
-    std::cout << "----------------------------------------" << std::endl;
-    std::cout << "File System Block Size: " << st.st_blksize << " bytes" << std::endl;
-    std::cout << "Physical Block Address: " << physical_block_address_bytes << " (bytes)" << std::endl;
-    std::cout << "LBA (relative to filesystem): " << fs_lba << std::endl;
-    std::cout << "Partition Start LBA:          " << partition_start_lba << std::endl;
-    std::cout << "Absolute LBA on Disk:         " << absolute_lba << std::endl;
+    LOG_INFO("File: {}", filepath);
+    LOG_INFO("Offset: {}", offset);
+    LOG_INFO("----------------------------------------");
+    LOG_INFO("File System Block Size: {} bytes", st.st_blksize);
+    LOG_INFO("Physical Block Address: {} (bytes)", physical_block_address_bytes);
+    LOG_INFO("LBA (relative to filesystem): {}", fs_lba);
+    LOG_INFO("Partition Start LBA:          {}", partition_start_lba);
+    LOG_INFO("Absolute LBA on Disk:         {}", absolute_lba);
 }
+
+#endif // !_WIN32

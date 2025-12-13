@@ -20,16 +20,21 @@ enum class LogLevel
     STEP,
     INFO,
     WARNING,
-    ERROR,
+    L_ERROR,
     FATAL
 };
 
 class Logger
 {
 public:
-    Logger(LogLevel level = LogLevel::INFO) : level_(level) {}
+    Logger(const Logger &) = delete;
+    Logger &operator=(const Logger &) = delete;
 
-    ~Logger() = default; // std::unique_ptr will handle the file stream automatically
+    static Logger &get()
+    {
+        static Logger instance;
+        return instance;
+    }
 
     void set_level(LogLevel level)
     {
@@ -44,7 +49,7 @@ public:
             {"INFO", LogLevel::INFO},
             {"STEP", LogLevel::STEP},
             {"WARNING", LogLevel::WARNING},
-            {"ERROR", LogLevel::ERROR},
+            {"ERROR", LogLevel::L_ERROR},
             {"FATAL", LogLevel::FATAL}};
 
         std::string upper_level = level_str;
@@ -113,6 +118,9 @@ public:
     }
 
 private:
+    Logger() : level_(LogLevel::INFO) {}
+    ~Logger() = default;
+
     LogLevel level_;
     std::mutex mutex_;
     std::unique_ptr<std::ofstream> file_stream_;
@@ -131,7 +139,7 @@ private:
             return "STEP ";
         case LogLevel::WARNING:
             return "WARN ";
-        case LogLevel::ERROR:
+        case LogLevel::L_ERROR:
             return "ERROR";
         case LogLevel::FATAL:
             return "FATAL";
@@ -142,10 +150,10 @@ private:
 };
 
 // Use macros to automatically capture file and line number
-#define LOG_TRACE(logger, fmt, ...) (logger).log_impl(LogLevel::TRACE, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_DEBUG(logger, fmt, ...) (logger).log_impl(LogLevel::DEBUG, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_INFO(logger, fmt, ...) (logger).log_impl(LogLevel::INFO, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_STEP(logger, fmt, ...) (logger).log_impl(LogLevel::STEP, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_WARNING(logger, fmt, ...) (logger).log_impl(LogLevel::WARNING, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_ERROR(logger, fmt, ...) (logger).log_impl(LogLevel::ERROR, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_FATAL(logger, fmt, ...) (logger).log_impl(LogLevel::FATAL, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define LOG_TRACE(fmt, ...) (Logger::get().log_impl(LogLevel::TRACE, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_DEBUG(fmt, ...) (Logger::get().log_impl(LogLevel::DEBUG, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_INFO(fmt, ...) (Logger::get().log_impl(LogLevel::INFO, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_STEP(fmt, ...) (Logger::get().log_impl(LogLevel::STEP, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_WARNING(fmt, ...) (Logger::get().log_impl(LogLevel::WARNING, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_ERROR(fmt, ...) (Logger::get().log_impl(LogLevel::L_ERROR, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_FATAL(fmt, ...) (Logger::get().log_impl(LogLevel::FATAL, __FILE__, __LINE__, fmt, ##__VA_ARGS__))

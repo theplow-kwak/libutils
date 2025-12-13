@@ -16,7 +16,6 @@ std::string formatWithCommas(unsigned long number)
 
 int main(int argc, char *argv[])
 {
-    Logger logger(LogLevel::DEBUG);
     // std::locale::global(std::locale(""));
 
     ArgParser parser("Copy and Compare test. ver. 0.1.0");
@@ -36,33 +35,33 @@ int main(int argc, char *argv[])
     auto cmd = parser.get_positional("command").value();
     auto source = parser.get_positional("source").value();
     std::vector<std::string> destlist = parser.get_list("dest").value_or(std::vector<std::string>{});
-    
+
     // Use new get<T> for type conversion
     auto multithread = parser.get<int>("thread").value_or(1);
     auto test = parser.is_set("test");
     auto nTestTime = parser.get<int>("time").value_or(1) * ((test) ? 1 : 60);
-    
+
     // Test hex parsing
     auto offset = parser.get<long>("offset").value_or(0);
-    
-    auto log_level = parser.get("log").value();
-    logger.set_level(log_level);
 
-    LOG_INFO(logger, "Source: {:>10}", source);
-    LOG_INFO(logger, "Destination: {}", parser.get("dest").value());
-    LOG_INFO(logger, "Thread count: {}", multithread);
-    LOG_INFO(logger, "Offset: {:#x}", offset); // Log the parsed hex value
-    LOG_INFO(logger, "Test mode: {}", test ? "enabled" : "disabled");
-    LOG_INFO(logger, "Test time: {} minutes", formatWithCommas(nTestTime).c_str());
+    auto log_level = parser.get("log").value();
+    Logger::get().set_level(log_level);
+
+    LOG_INFO("Source: {:>10}", source);
+    LOG_INFO("Destination: {}", parser.get("dest").value());
+    LOG_INFO("Thread count: {}", multithread);
+    LOG_INFO("Offset: {:#x}", offset); // Log the parsed hex value
+    LOG_INFO("Test mode: {}", test ? "enabled" : "disabled");
+    LOG_INFO("Test time: {} minutes", formatWithCommas(nTestTime).c_str());
     printf("Test time: {%s} minutes\n", formatWithCommas(nTestTime).c_str());
-    LOG_DEBUG(logger, "Destination count: {:04d}", destlist.size());
+    LOG_DEBUG("Destination count: {:04d}", destlist.size());
     for (const auto &dest : destlist)
     {
-        LOG_DEBUG(logger, "Destination path: {}", dest);
+        LOG_DEBUG("Destination path: {}", dest);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    LOG_INFO(logger, "Starting copy and compare test...");
+    LOG_INFO("Starting copy and compare test...");
 
-    LOG_INFO(logger, "Copy and compare test completed.");
+    LOG_INFO("Copy and compare test completed.");
     return 0;
 }
