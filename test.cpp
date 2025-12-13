@@ -48,21 +48,21 @@ int main(int argc, char *argv[])
     auto log_level = parser.get("log").value();
     logger.set_level(log_level);
 
-    logger.info("Source: {:>10}", source);
+    LOG_INFO(logger, "Source: {:>10}", source);
     LOG_INFO(logger, "Destination: {}", parser.get("dest").value());
-    logger.info("Thread count: {}", multithread);
-    logger.info("Offset: {:#x}", offset); // Log the parsed hex value
-    logger.info("Test mode: {}", test ? "enabled" : "disabled");
-    logger.info("Test time: {} minutes", formatWithCommas(nTestTime).c_str());
+    LOG_INFO(logger, "Thread count: {}", multithread);
+    LOG_INFO(logger, "Offset: {:#x}", offset); // Log the parsed hex value
+    LOG_INFO(logger, "Test mode: {}", test ? "enabled" : "disabled");
+    LOG_INFO(logger, "Test time: {} minutes", formatWithCommas(nTestTime).c_str());
     printf("Test time: {%s} minutes\n", formatWithCommas(nTestTime).c_str());
-    logger.debug("Destination count: {:04d}", destlist.size());
+    LOG_DEBUG(logger, "Destination count: {:04d}", destlist.size());
     for (const auto &dest : destlist)
     {
         LOG_DEBUG(logger, "Destination path: {}", dest);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    logger.info("Starting copy and compare test...");
+    LOG_INFO(logger, "Starting copy and compare test...");
 
-    logger.info("Copy and compare test completed.");
+    LOG_INFO(logger, "Copy and compare test completed.");
     return 0;
 }

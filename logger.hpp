@@ -1,11 +1,15 @@
-#include <format>
+#pragma once
+
 #include <iostream>
 #include <string>
 #include <mutex>
 #include <chrono>
 #include <sstream>
-#include <algorithm>
 #include <fstream>
+#include <memory>
+#include <unordered_map>
+#include <format>
+#include <filesystem>
 #include <tuple>
 #include <utility>
 
@@ -23,15 +27,9 @@ enum class LogLevel
 class Logger
 {
 public:
-    Logger(LogLevel level = LogLevel::INFO) : level_(level), file_stream_(nullptr) {}
-    ~Logger()
-    {
-        if (file_stream_)
-        {
-            file_stream_->close();
-            delete file_stream_;
-        }
-    }
+    Logger(LogLevel level = LogLevel::INFO) : level_(level) {}
+
+    ~Logger() = default; // std::unique_ptr will handle the file stream automatically
 
     void set_level(LogLevel level)
     {
@@ -40,24 +38,26 @@ public:
 
     void set_level(const std::string &level_str)
     {
-        std::string lvl = level_str;
-        std::transform(lvl.begin(), lvl.end(), lvl.begin(), ::toupper);
-        if (lvl == "TRACE")
-            level_ = LogLevel::TRACE;
-        else if (lvl == "DEBUG")
-            level_ = LogLevel::DEBUG;
-        else if (lvl == "INFO")
-            level_ = LogLevel::INFO;
-        else if (lvl == "STEP")
-            level_ = LogLevel::STEP;
-        else if (lvl == "WARNING")
-            level_ = LogLevel::WARNING;
-        else if (lvl == "ERROR")
-            level_ = LogLevel::ERROR;
-        else if (lvl == "FATAL")
-            level_ = LogLevel::FATAL;
+        static const std::unordered_map<std::string, LogLevel> level_map = {
+            {"TRACE", LogLevel::TRACE},
+            {"DEBUG", LogLevel::DEBUG},
+            {"INFO", LogLevel::INFO},
+            {"STEP", LogLevel::STEP},
+            {"WARNING", LogLevel::WARNING},
+            {"ERROR", LogLevel::ERROR},
+            {"FATAL", LogLevel::FATAL}};
+
+        std::string upper_level = level_str;
+        std::transform(upper_level.begin(), upper_level.end(), upper_level.begin(), ::toupper);
+        auto it = level_map.find(upper_level);
+        if (it != level_map.end())
+        {
+            level_ = it->second;
+        }
         else
+        {
             level_ = LogLevel::INFO;
+        }
     }
 
     void set_logfile(const std::string &path)
@@ -66,85 +66,58 @@ public:
         if (file_stream_)
         {
             file_stream_->close();
-            delete file_stream_;
-            file_stream_ = nullptr;
+            file_stream_.reset();
         }
         if (!path.empty())
         {
-            file_stream_ = new std::ofstream(path, std::ios::app);
+            file_stream_ = std::make_unique<std::ofstream>(path, std::ios::app);
         }
     }
 
     template <typename... Args>
-    void log(LogLevel msg_level, const std::string &fmt_str, Args &&...args)
-    {
-        log_impl(msg_level, fmt_str, "", 0, std::forward<Args>(args)...);
-    }
-
-    template <typename... Args>
-    void log_impl(LogLevel msg_level, const std::string &fmt_str, const char *file, int line, Args &&...args)
+    void log_impl(LogLevel msg_level, std::string_view file, int line, const std::string &fmt_str, Args &&...args)
     {
         if (msg_level < level_)
             return;
 
-        std::lock_guard<std::mutex> lock(mutex_);
         auto now = std::chrono::system_clock::now();
-        auto in_time_t = std::chrono::system_clock::to_time_t(now);
-        auto duration = now.time_since_epoch();
-        auto micros = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() % 1000000;
-        micros = static_cast<int>(micros / 1000);
 
-        std::ostringstream time_ss;
-        time_ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d_%H:%M:%S");
-        time_ss << "." << std::setfill('0') << std::setw(3) << micros;
+        std::string msg = std::vformat(fmt_str, std::make_format_args(args...));
 
-        std::string level_str = level_to_string(msg_level);
-        std::tuple<std::decay_t<Args>...> arg_tuple(std::forward<Args>(args)...);
-        std::string msg = std::apply(
-            [&](auto &...a)
-            { return std::vformat(fmt_str, std::make_format_args(a...)); },
-            arg_tuple);
+        std::lock_guard<std::mutex> lock(mutex_);
 
-        std::ostringstream out;
-        if (file && line > 0)
-            out << time_ss.str() << "-[" << level_str << "] " << file << ":" << line << " " << msg << std::endl;
-        else
-            out << time_ss.str() << "-[" << level_str << "] " << msg << std::endl;
+        // Format and print header to both streams
+        auto print_header = [&](std::ostream &os)
+        {
+            const auto zoned_time = std::chrono::zoned_time{std::chrono::current_zone(), now};
+            // Floor the time to seconds to prevent std::format from adding its own fractional part.
+            const auto seconds_part = std::chrono::floor<std::chrono::seconds>(zoned_time.get_local_time());
+
+            os << std::format("{:%Y-%m-%d_%H:%M:%S}", seconds_part) << "."
+               << std::format("{:03}", std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000)
+               << "-[" << level_to_string(msg_level) << "] ";
+            if (line > 0)
+            {
+                os << std::filesystem::path(file).filename().string() << ":" << line << " ";
+            }
+        };
+
+        print_header(std::cout);
+        std::cout << msg << std::endl;
 
         if (file_stream_ && file_stream_->is_open())
-            *file_stream_ << out.str();
-        std::cout << out.str();
+        {
+            print_header(*file_stream_);
+            *file_stream_ << msg << std::endl;
+        }
     }
-
-#define LOG_TRACE(logger, fmt, ...) (logger).log_impl(LogLevel::TRACE, fmt, __FILE__, __LINE__, ##__VA_ARGS__)
-#define LOG_DEBUG(logger, fmt, ...) (logger).log_impl(LogLevel::DEBUG, fmt, __FILE__, __LINE__, ##__VA_ARGS__)
-#define LOG_INFO(logger, fmt, ...) (logger).log_impl(LogLevel::INFO, fmt, __FILE__, __LINE__, ##__VA_ARGS__)
-#define LOG_STEP(logger, fmt, ...) (logger).log_impl(LogLevel::STEP, fmt, __FILE__, __LINE__, ##__VA_ARGS__)
-#define LOG_WARNING(logger, fmt, ...) (logger).log_impl(LogLevel::WARNING, fmt, __FILE__, __LINE__, ##__VA_ARGS__)
-#define LOG_ERROR(logger, fmt, ...) (logger).log_impl(LogLevel::ERROR, fmt, __FILE__, __LINE__, ##__VA_ARGS__)
-#define LOG_FATAL(logger, fmt, ...) (logger).log_impl(LogLevel::FATAL, fmt, __FILE__, __LINE__, ##__VA_ARGS__)
-
-    template <typename... Args>
-    void trace(const std::string &fmt_str, Args &&...args) { log(LogLevel::TRACE, fmt_str, std::forward<Args>(args)...); }
-    template <typename... Args>
-    void debug(const std::string &fmt_str, Args &&...args) { log(LogLevel::DEBUG, fmt_str, std::forward<Args>(args)...); }
-    template <typename... Args>
-    void info(const std::string &fmt_str, Args &&...args) { log(LogLevel::INFO, fmt_str, std::forward<Args>(args)...); }
-    template <typename... Args>
-    void step(const std::string &fmt_str, Args &&...args) { log(LogLevel::STEP, fmt_str, std::forward<Args>(args)...); }
-    template <typename... Args>
-    void warning(const std::string &fmt_str, Args &&...args) { log(LogLevel::WARNING, fmt_str, std::forward<Args>(args)...); }
-    template <typename... Args>
-    void error(const std::string &fmt_str, Args &&...args) { log(LogLevel::ERROR, fmt_str, std::forward<Args>(args)...); }
-    template <typename... Args>
-    void fatal(const std::string &fmt_str, Args &&...args) { log(LogLevel::FATAL, fmt_str, std::forward<Args>(args)...); }
 
 private:
     LogLevel level_;
     std::mutex mutex_;
-    std::ofstream *file_stream_ = nullptr;
+    std::unique_ptr<std::ofstream> file_stream_;
 
-    static std::string level_to_string(LogLevel level)
+    static const char *level_to_string(LogLevel level)
     {
         switch (level)
         {
@@ -163,7 +136,16 @@ private:
         case LogLevel::FATAL:
             return "FATAL";
         default:
-            return "UNKNOWN";
+            return "UNKWN";
         }
     }
 };
+
+// Use macros to automatically capture file and line number
+#define LOG_TRACE(logger, fmt, ...) (logger).log_impl(LogLevel::TRACE, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define LOG_DEBUG(logger, fmt, ...) (logger).log_impl(LogLevel::DEBUG, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define LOG_INFO(logger, fmt, ...) (logger).log_impl(LogLevel::INFO, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define LOG_STEP(logger, fmt, ...) (logger).log_impl(LogLevel::STEP, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define LOG_WARNING(logger, fmt, ...) (logger).log_impl(LogLevel::WARNING, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define LOG_ERROR(logger, fmt, ...) (logger).log_impl(LogLevel::ERROR, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define LOG_FATAL(logger, fmt, ...) (logger).log_impl(LogLevel::FATAL, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
