@@ -186,7 +186,8 @@ namespace argparse
             if constexpr (std::is_same_v<T, bool>)
             {
                 std::transform(value_str.begin(), value_str.end(), value_str.begin(),
-                               [](unsigned char c) { return std::tolower(c); });
+                               [](unsigned char c)
+                               { return std::tolower(c); });
                 if (value_str == "true" || value_str == "1")
                     return true;
                 if (value_str == "false" || value_str == "0")
@@ -198,15 +199,17 @@ namespace argparse
                 std::istringstream iss(value_str);
                 if constexpr (std::is_integral_v<T>)
                 {
-                    // Check for 0x/0X prefix for hex conversion
-                    if (value_str.size() > 2 && value_str[0] == '0' && (value_str[1] == 'x' || value_str[1] == 'X'))
-                    {
+                    // Check for hex prefix or hex characters
+                    bool is_hex = (value_str.size() > 2 && value_str[0] == '0' &&
+                                   (value_str[1] == 'x' || value_str[1] == 'X')) ||
+                                  std::any_of(value_str.begin(), value_str.end(),
+                                              [](char c)
+                                              { return (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); });
+
+                    if (is_hex)
                         iss >> std::hex >> val;
-                    }
                     else
-                    {
                         iss >> val;
-                    }
                 }
                 else
                 { // Floating point or other non-bool, non-integral types
