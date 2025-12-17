@@ -299,10 +299,10 @@ namespace argparse
             if (!description_.empty())
                 std::cout << description_ << "\n\n";
             // Print positional arguments
+            size_t maxlen = 25;
             if (!positional_defs_.empty())
             {
                 std::cout << "Positional arguments:\n";
-                size_t maxlen = 0;
                 for (const auto &pos : positional_defs_)
                     maxlen = std::max(maxlen, pos.name.size());
                 for (const auto &pos : positional_defs_)
@@ -315,11 +315,11 @@ namespace argparse
                         std::cout << " [default: " << *pos.default_value << "]";
                     std::cout << "\n";
                 }
+                std::cout << "\n";
             }
             // --- Options & Flags ---
             std::cout << "Options:\n";
             std::vector<std::pair<std::string, std::string>> all_list;
-            size_t maxlen = 0;
 
             for (const auto &opt : options_)
             {
