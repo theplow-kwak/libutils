@@ -1,14 +1,15 @@
+#pragma once
+
+#include <algorithm>
+#include <iomanip>
 #include <iostream>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
-#include <vector>
-#include <unordered_map>
-#include <optional>
-#include <algorithm>
-#include <unordered_set>
-#include <iomanip>
-#include <sstream>
 #include <type_traits>
+#include <unordered_map>
+#include <vector>
 
 namespace argparse
 {
@@ -103,7 +104,7 @@ namespace argparse
                         {
                             if (arg_val.has_value())
                             {
-                                opt.value = *arg_val;
+                                opt.value = std::string(*arg_val);
                             }
                             else if (i + 1 < argc)
                             {
@@ -128,7 +129,7 @@ namespace argparse
                 {
                     if (pos_idx < positional_defs_.size())
                     {
-                        positional_defs_[pos_idx++].value = arg;
+                        positional_defs_[pos_idx++].value = std::string(arg);
                     }
                     else
                     {
@@ -180,17 +181,18 @@ namespace argparse
                 return std::nullopt;
             }
 
-            std::string value_str = *value_str_opt;
+            const std::string& value_str = *value_str_opt;
             T val;
 
             if constexpr (std::is_same_v<T, bool>)
             {
-                std::transform(value_str.begin(), value_str.end(), value_str.begin(),
+                std::string lower_str = value_str;
+                std::transform(lower_str.begin(), lower_str.end(), lower_str.begin(),
                                [](unsigned char c)
                                { return std::tolower(c); });
-                if (value_str == "true" || value_str == "1")
+                if (lower_str == "true" || lower_str == "1")
                     return true;
-                if (value_str == "false" || value_str == "0")
+                if (lower_str == "false" || lower_str == "0")
                     return false;
                 return std::nullopt;
             }
