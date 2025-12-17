@@ -181,7 +181,7 @@ namespace argparse
                 return std::nullopt;
             }
 
-            const std::string& value_str = *value_str_opt;
+            const std::string &value_str = *value_str_opt;
             T val;
 
             if constexpr (std::is_same_v<T, bool>)
@@ -202,8 +202,7 @@ namespace argparse
                 if constexpr (std::is_integral_v<T>)
                 {
                     // Check for hex prefix or hex characters
-                    bool is_hex = (value_str.size() > 2 && value_str[0] == '0' &&
-                                   (value_str[1] == 'x' || value_str[1] == 'X')) ||
+                    bool is_hex = value_str.starts_with("0x") || value_str.starts_with("0X") ||
                                   std::any_of(value_str.begin(), value_str.end(),
                                               [](char c)
                                               { return (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); });
