@@ -15,12 +15,12 @@ int main(int argc, char *argv[])
 
     std::string mode = argv[1];
     int diskNumber = std::stoi(argv[2]);
-    long size = std::stol(argv[3]);
-    long long lba = std::stoll(argv[4]);
+    long size = std::stol(argv[4]);
+    long long lba = std::stoll(argv[3]);
 
     std::string diskPath = "\\\\.\\PhysicalDrive" + std::to_string(diskNumber);
 
-    HANDLE hDevice = CreateFile(diskPath.c_str(), mode == "r" ? GENERIC_READ : GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, NULL);
+    HANDLE hDevice = CreateFileA(diskPath.c_str(), mode == "r" ? GENERIC_READ : GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, NULL);
     if (hDevice == INVALID_HANDLE_VALUE)
     {
         std::cerr << "Failed to open disk: " << diskPath << std::endl;
@@ -54,7 +54,7 @@ int main(int argc, char *argv[])
 
         std::cout << "Read " << static_cast<DWORD>(size) << " bytes from LBA " << static_cast<DWORD>(lba) << std::endl;
         // Print 16 bytes of data by hexdump
-        for (size_t i = 0; i < 32; i += 16)
+        for (size_t i = 0; i < size; i += 16)
         {
             std::cout << std::hex << std::setw(8) << std::setfill('0') << i << "  ";
             for (size_t j = 0; j < 16 && i + j < buffer.size(); ++j)
