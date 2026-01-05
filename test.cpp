@@ -49,13 +49,13 @@ int main(int argc, char *argv[])
 
     LOG_INFO("Source: {:>10}", source);
     LOG_INFO("Destination: {}", parser.get("dest").value());
-    LOG_INFO("Thread count: %d", multithread);
+    LOG_INFO("Thread count: {}", multithread);
     LOG_INFO("Offset: {:#x}", offset); // Log the parsed hex value
-    LOG_INFO("Test mode: {}", test ? "enabled" : "disabled");
-    LOG_INFO("Test time: %s minutes", formatWithCommas(nTestTime).c_str());
+    LOG_INFO("Test mode: {} {}", test, test ? "enabled" : "disabled");
+    LOG_INFO("Test time: {} minutes", formatWithCommas(nTestTime));
     printf("Test time: {%s} minutes\n", formatWithCommas(nTestTime).c_str());
 
-    // printf-style format (자동 판별 테스트)
+    // printf-style format (명시적 printf API 테스트)
     LOG_INFO("Printf-style: %s %d", "hello", 123);
 
     LOG_DEBUG("Destination count: {:04d}", destlist.size());

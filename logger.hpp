@@ -93,16 +93,30 @@ public:
         auto now = std::chrono::system_clock::now();
 
         std::string msg;
-        if (is_printf_style(fmt_str))
+        try
         {
-            // Format printf-style by walking the argument tuple and converting each arg to string
-            auto tup = std::forward_as_tuple(std::forward<Args>(args)...);
-            msg = format_printf(fmt_str, tup);
+            // First, try to format using std::vformat, assuming std::format style.
+            if constexpr (sizeof...(args) > 0)
+            {
+                msg = std::vformat(fmt_str, std::make_format_args(args...));
+            }
+            else
+            {
+                msg = fmt_str;
+            }
         }
-        else
+        catch (const std::format_error &)
         {
-            // std::vformat works for std::format-style {} formats
-            msg = std::vformat(fmt_str, std::make_format_args(args...));
+            // If std::vformat fails, fall back to printf-style formatting.
+            if constexpr (sizeof...(args) > 0)
+            {
+                auto tup = std::forward_as_tuple(std::forward<Args>(args)...);
+                msg = format_printf(fmt_str, tup);
+            }
+            else
+            {
+                msg = fmt_str;
+            }
         }
 
         std::lock_guard<std::mutex> lock(mutex_);
@@ -110,12 +124,11 @@ public:
         // Format and print header to both streams
         auto print_header = [&](std::ostream &os)
         {
-            const auto zoned_time = std::chrono::zoned_time{std::chrono::current_zone(), now};
-            // Floor the time to seconds to prevent std::format from adding its own fractional part.
-            const auto seconds_part = std::chrono::floor<std::chrono::seconds>(zoned_time.get_local_time());
+            // C++20 formatting for timestamp with milliseconds
+            const auto time_in_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
+            const auto zoned_time = std::chrono::zoned_time(std::chrono::current_zone(), time_in_ms);
 
-            os << std::format("{:%Y-%m-%d_%H:%M:%S}", seconds_part) << "."
-               << std::format("{:03}", std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000)
+            os << std::format("{:%Y-%m-%d_%H:%M:%S}", zoned_time)
                << "-[" << level_to_string(msg_level) << "] ";
             if (line > 0)
             {
@@ -141,139 +154,101 @@ private:
     std::mutex mutex_;
     std::unique_ptr<std::ofstream> file_stream_;
 
-    static bool is_printf_style(std::string_view s)
-    {
-        for (size_t i = 0; i + 1 < s.size(); ++i)
-        {
-            if (s[i] == '%')
-            {
-                if (s[i + 1] == '%') { ++i; continue; }
-                if (std::string_view("diuoxXfFeEgGaAcspn").find(s[i + 1]) != std::string_view::npos)
-                    return true;
-            }
-        }
-        return false;
-    }
-
     template <typename Tuple>
     static std::string format_printf(std::string_view fmt, Tuple &tup)
     {
         std::ostringstream os;
         size_t arg_index = 0;
-        for (size_t i = 0; i < fmt.size(); ++i)
+        size_t i = 0;
+
+        while (i < fmt.size())
         {
-            if (fmt[i] == '%')
+            size_t percent_pos = fmt.find('%', i);
+            if (percent_pos == std::string_view::npos)
             {
-                if (i + 1 < fmt.size() && fmt[i + 1] == '%')
-                {
-                    os << '%';
-                    ++i;
-                    continue;
-                }
-                // find conversion specifier char
-                size_t j = i + 1;
-                while (j < fmt.size() && !std::isalpha(static_cast<unsigned char>(fmt[j])) && fmt[j] != '%')
-                    ++j;
-                if (j >= fmt.size())
-                    break;
-                char spec = fmt[j];
-                os << format_printf_arg(tup, arg_index, spec);
-                ++arg_index;
-                i = j;
+                os << fmt.substr(i);
+                break;
             }
-            else
+
+            os << fmt.substr(i, percent_pos - i);
+
+            if (percent_pos + 1 >= fmt.size())
             {
-                os << fmt[i];
+                os << '%'; // Dangling '%' at the end of the string
+                break;
             }
+
+            if (fmt[percent_pos + 1] == '%')
+            {
+                os << '%';
+                i = percent_pos + 2;
+                continue;
+            }
+
+            size_t spec_end = fmt.find_first_of("diuoxXfFeEgGaAcspn", percent_pos + 1);
+
+            if (spec_end == std::string_view::npos)
+            {
+                // Invalid format specifier, print literally
+                os << fmt.substr(percent_pos, 1);
+                i = percent_pos + 1;
+                continue;
+            }
+
+            std::string_view spec_group = fmt.substr(percent_pos, spec_end - percent_pos + 1);
+            os << format_printf_arg(tup, arg_index, spec_group);
+
+            arg_index++;
+            i = spec_end + 1;
         }
         return os.str();
     }
 
+    template <typename T>
+    static std::string format_one_arg(const T &v, std::string_view spec_group)
+    {
+        char buffer[1024];
+        std::string fmt(spec_group);
+
+        // Use snprintf for safe formatting.
+        // This relies on default argument promotions for arithmetic types.
+        if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view>)
+        {
+            snprintf(buffer, sizeof(buffer), fmt.c_str(), std::string(v).c_str());
+        }
+        else if constexpr (std::is_convertible_v<std::decay_t<T>, const char *>)
+        {
+            snprintf(buffer, sizeof(buffer), fmt.c_str(), v);
+        }
+        else if constexpr (std::is_pointer_v<T>)
+        {
+            // For any other pointer, always use %p for safety, ignoring user's specifier.
+            snprintf(buffer, sizeof(buffer), "%p", static_cast<const void *>(v));
+        }
+        else if constexpr (std::is_arithmetic_v<T>) // Catches integers, floats, bool
+        {
+            snprintf(buffer, sizeof(buffer), fmt.c_str(), v);
+        }
+        else
+        {
+            // Fallback for unformattable types
+            return "[unformattable type]";
+        }
+        return buffer;
+    }
+
     template <std::size_t I = 0, typename Tuple>
-    static std::string format_printf_arg(Tuple &tup, size_t index, char spec)
+    static std::string format_printf_arg(Tuple &tup, size_t index, std::string_view spec_group)
     {
         if constexpr (I < std::tuple_size_v<std::remove_reference_t<Tuple>>)
         {
             if (I == index)
-                return format_one(std::get<I>(tup), spec);
-            return format_printf_arg<I + 1>(tup, index, spec);
-        }
-        return std::string("[missing arg]");
-    }
-
-    template <typename T>
-    static std::string format_one(const T &v, char spec)
-    {
-        std::ostringstream oss;
-        if (spec == 's')
-        {
-            if constexpr (std::is_convertible_v<T, std::string>)
-                oss << v;
-            else if constexpr (std::is_pointer_v<T> && std::is_same_v<std::remove_cv_t<std::remove_pointer_t<T>>, char>)
-                oss << (v ? v : "(null)");
-            else
-                oss << v;
-        }
-        else if (spec == 'd' || spec == 'i')
-        {
-            if constexpr (std::is_integral_v<T>)
-                oss << static_cast<long long>(v);
-            else
-                oss << v;
-        }
-        else if (spec == 'u')
-        {
-            if constexpr (std::is_integral_v<T>)
-                oss << static_cast<std::make_unsigned_t<T>>(v);
-            else
-                oss << v;
-        }
-        else if (spec == 'f' || spec == 'F' || spec == 'e' || spec == 'E' || spec == 'g' || spec == 'G' || spec == 'a' || spec == 'A')
-        {
-            if constexpr (std::is_floating_point_v<T>)
-                oss << v;
-            else
-                oss << v;
-        }
-        else if (spec == 'c')
-        {
-            if constexpr (std::is_integral_v<T>)
-                oss << static_cast<char>(v);
-            else if constexpr (std::is_same_v<T, char>)
-                oss << v;
-            else
-                oss << v;
-        }
-        else if (spec == 'x' || spec == 'X' || spec == 'o')
-        {
-            if constexpr (std::is_integral_v<T>)
             {
-                std::ostringstream tmp;
-                if (spec == 'o')
-                    tmp << std::oct << v;
-                else
-                {
-                    if (spec == 'X')
-                        tmp << std::uppercase;
-                    tmp << std::hex << static_cast<std::make_unsigned_t<T>>(v);
-                }
-                oss << tmp.str();
+                return format_one_arg(std::get<I>(tup), spec_group);
             }
-            else
-                oss << v;
+            return format_printf_arg<I + 1>(tup, index, spec_group);
         }
-        else if (spec == 'p')
-        {
-            if constexpr (std::is_pointer_v<T>)
-                oss << v;
-            else
-                oss << v;
-        }
-        else
-        {
-            oss << v;
-        }
-        return oss.str();
+        return "[missing arg]";
     }
 
     static const char *level_to_string(LogLevel level)
