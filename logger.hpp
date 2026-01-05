@@ -20,13 +20,13 @@
 
 enum class LogLevel
 {
-    TRACE,
-    DEBUG,
-    STEP,
-    INFO,
-    WARNING,
-    L_ERROR,
-    FATAL
+    LOG_TRACE,
+    LOG_DEBUG,
+    LOG_STEP,
+    LOG_INFO,
+    LOG_WARNING,
+    LOG_ERROR,
+    LOG_FATAL
 };
 
 class Logger
@@ -49,13 +49,13 @@ public:
     void set_level(const std::string &level_str)
     {
         static const std::unordered_map<std::string, LogLevel> level_map = {
-            {"TRACE", LogLevel::TRACE},
-            {"DEBUG", LogLevel::DEBUG},
-            {"INFO", LogLevel::INFO},
-            {"STEP", LogLevel::STEP},
-            {"WARNING", LogLevel::WARNING},
-            {"ERROR", LogLevel::L_ERROR},
-            {"FATAL", LogLevel::FATAL}};
+            {"TRACE", LogLevel::LOG_TRACE},
+            {"DEBUG", LogLevel::LOG_DEBUG},
+            {"INFO", LogLevel::LOG_INFO},
+            {"STEP", LogLevel::LOG_STEP},
+            {"WARNING", LogLevel::LOG_WARNING},
+            {"ERROR", LogLevel::LOG_ERROR},
+            {"FATAL", LogLevel::LOG_FATAL}};
 
         std::string upper_level = level_str;
         std::transform(upper_level.begin(), upper_level.end(), upper_level.begin(), ::toupper);
@@ -66,7 +66,7 @@ public:
         }
         else
         {
-            level_ = LogLevel::INFO;
+            level_ = LogLevel::LOG_INFO;
         }
     }
 
@@ -95,28 +95,22 @@ public:
         std::string msg;
         try
         {
-            // First, try to format using std::vformat, assuming std::format style.
-            if constexpr (sizeof...(args) > 0)
-            {
-                msg = std::vformat(fmt_str, std::make_format_args(args...));
-            }
-            else
-            {
-                msg = fmt_str;
-            }
-        }
-        catch (const std::format_error &)
-        {
-            // If std::vformat fails, fall back to printf-style formatting.
-            if constexpr (sizeof...(args) > 0)
+            if (is_printf_style(fmt_str))
             {
                 auto tup = std::forward_as_tuple(std::forward<Args>(args)...);
                 msg = format_printf(fmt_str, tup);
             }
             else
             {
-                msg = fmt_str;
+
+                msg = std::vformat(fmt_str, std::make_format_args(args...));
             }
+        }
+        catch (const std::exception &e)
+        {
+            msg = std::string("Log formatting error: ") + e.what();
+            std::cerr << msg << std::endl;
+            msg = fmt_str;
         }
 
         std::lock_guard<std::mutex> lock(mutex_);
@@ -147,12 +141,30 @@ public:
     }
 
 private:
-    Logger() : level_(LogLevel::INFO) {}
+    Logger() : level_(LogLevel::LOG_INFO) {}
     ~Logger() = default;
 
     LogLevel level_;
     std::mutex mutex_;
     std::unique_ptr<std::ofstream> file_stream_;
+
+    static bool is_printf_style(std::string_view s)
+    {
+        for (size_t i = 0; i + 1 < s.size(); ++i)
+        {
+            if (s[i] == '%')
+            {
+                if (s[i + 1] == '%')
+                {
+                    ++i;
+                    continue;
+                }
+                if (std::string_view("diuoxXfFeEgGaAcspn").find(s[i + 1]) != std::string_view::npos)
+                    return true;
+            }
+        }
+        return false;
+    }
 
     template <typename Tuple>
     static std::string format_printf(std::string_view fmt, Tuple &tup)
@@ -210,29 +222,78 @@ private:
         char buffer[1024];
         std::string fmt(spec_group);
 
-        // Use snprintf for safe formatting.
-        // This relies on default argument promotions for arithmetic types.
-        if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view>)
+        char spec_char = ' ';
+        if (!spec_group.empty())
         {
-            snprintf(buffer, sizeof(buffer), fmt.c_str(), std::string(v).c_str());
+            for (size_t i = spec_group.length() - 1; i > 0; --i)
+            {
+                if (isalpha(spec_group[i]))
+                {
+                    spec_char = spec_group[i];
+                    break;
+                }
+            }
         }
-        else if constexpr (std::is_convertible_v<std::decay_t<T>, const char *>)
+
+        auto format_error = [&]() -> std::string {
+            std::ostringstream oss;
+            oss << "[FORMAT_ERROR: Mismatch between " << fmt << " and argument type]";
+            return oss.str();
+        };
+
+        switch (spec_char)
         {
-            snprintf(buffer, sizeof(buffer), fmt.c_str(), v);
-        }
-        else if constexpr (std::is_pointer_v<T>)
-        {
-            // For any other pointer, always use %p for safety, ignoring user's specifier.
-            snprintf(buffer, sizeof(buffer), "%p", static_cast<const void *>(v));
-        }
-        else if constexpr (std::is_arithmetic_v<T>) // Catches integers, floats, bool
-        {
-            snprintf(buffer, sizeof(buffer), fmt.c_str(), v);
-        }
-        else
-        {
-            // Fallback for unformattable types
-            return "[unformattable type]";
+        case 's':
+            if constexpr (std::is_convertible_v<std::decay_t<T>, const char *>)
+                snprintf(buffer, sizeof(buffer), fmt.c_str(), v);
+            else if constexpr (std::is_same_v<std::decay_t<T>, std::string> || std::is_same_v<std::decay_t<T>, std::string_view>)
+                snprintf(buffer, sizeof(buffer), fmt.c_str(), std::string(v).c_str());
+            else
+                return format_error();
+            break;
+
+        case 'd':
+        case 'i':
+        case 'u':
+        case 'o':
+        case 'x':
+        case 'X':
+            if constexpr (std::is_integral_v<T> || std::is_same_v<T, bool>)
+                snprintf(buffer, sizeof(buffer), fmt.c_str(), static_cast<long long>(v));
+            else
+                return format_error();
+            break;
+
+        case 'f':
+        case 'F':
+        case 'e':
+        case 'E':
+        case 'g':
+        case 'G':
+        case 'a':
+        case 'A':
+            if constexpr (std::is_floating_point_v<T>)
+                snprintf(buffer, sizeof(buffer), fmt.c_str(), static_cast<double>(v));
+            else
+                return format_error();
+            break;
+
+        case 'c':
+            if constexpr (std::is_integral_v<T>) // char is promoted to int
+                snprintf(buffer, sizeof(buffer), fmt.c_str(), static_cast<int>(v));
+            else
+                return format_error();
+            break;
+
+        case 'p':
+            if constexpr (std::is_pointer_v<T>)
+                snprintf(buffer, sizeof(buffer), fmt.c_str(), v);
+            else
+                return format_error();
+            break;
+
+        default:
+            return format_error();
         }
         return buffer;
     }
@@ -255,19 +316,19 @@ private:
     {
         switch (level)
         {
-        case LogLevel::TRACE:
+        case LogLevel::LOG_TRACE:
             return "TRACE";
-        case LogLevel::DEBUG:
+        case LogLevel::LOG_DEBUG:
             return "DEBUG";
-        case LogLevel::INFO:
+        case LogLevel::LOG_INFO:
             return "INFO ";
-        case LogLevel::STEP:
+        case LogLevel::LOG_STEP:
             return "STEP ";
-        case LogLevel::WARNING:
+        case LogLevel::LOG_WARNING:
             return "WARN ";
-        case LogLevel::L_ERROR:
+        case LogLevel::LOG_ERROR:
             return "ERROR";
-        case LogLevel::FATAL:
+        case LogLevel::LOG_FATAL:
             return "FATAL";
         default:
             return "UNKWN";
@@ -276,10 +337,10 @@ private:
 };
 
 // Use macros to automatically capture file and line number
-#define LOG_TRACE(fmt, ...) (Logger::get().log_impl(LogLevel::TRACE, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
-#define LOG_DEBUG(fmt, ...) (Logger::get().log_impl(LogLevel::DEBUG, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
-#define LOG_INFO(fmt, ...) (Logger::get().log_impl(LogLevel::INFO, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
-#define LOG_STEP(fmt, ...) (Logger::get().log_impl(LogLevel::STEP, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
-#define LOG_WARNING(fmt, ...) (Logger::get().log_impl(LogLevel::WARNING, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
-#define LOG_ERROR(fmt, ...) (Logger::get().log_impl(LogLevel::L_ERROR, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
-#define LOG_FATAL(fmt, ...) (Logger::get().log_impl(LogLevel::FATAL, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_TRACE(fmt, ...) (Logger::get().log_impl(LogLevel::LOG_TRACE, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_DEBUG(fmt, ...) (Logger::get().log_impl(LogLevel::LOG_DEBUG, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_INFO(fmt, ...) (Logger::get().log_impl(LogLevel::LOG_INFO, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_STEP(fmt, ...) (Logger::get().log_impl(LogLevel::LOG_STEP, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_WARNING(fmt, ...) (Logger::get().log_impl(LogLevel::LOG_WARNING, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_ERROR(fmt, ...) (Logger::get().log_impl(LogLevel::LOG_ERROR, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
+#define LOG_FATAL(fmt, ...) (Logger::get().log_impl(LogLevel::LOG_FATAL, __FILE__, __LINE__, fmt, ##__VA_ARGS__))
