@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <mutex>
 #include <chrono>
 #include <sstream>
@@ -12,6 +13,10 @@
 #include <filesystem>
 #include <tuple>
 #include <utility>
+#include <type_traits>
+#include <cctype>
+
+#define LIBUTILS_HAS_FMT 0
 
 enum class LogLevel
 {
@@ -87,7 +92,18 @@ public:
 
         auto now = std::chrono::system_clock::now();
 
-        std::string msg = std::vformat(fmt_str, std::make_format_args(args...));
+        std::string msg;
+        if (is_printf_style(fmt_str))
+        {
+            // Format printf-style by walking the argument tuple and converting each arg to string
+            auto tup = std::forward_as_tuple(std::forward<Args>(args)...);
+            msg = format_printf(fmt_str, tup);
+        }
+        else
+        {
+            // std::vformat works for std::format-style {} formats
+            msg = std::vformat(fmt_str, std::make_format_args(args...));
+        }
 
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -124,6 +140,141 @@ private:
     LogLevel level_;
     std::mutex mutex_;
     std::unique_ptr<std::ofstream> file_stream_;
+
+    static bool is_printf_style(std::string_view s)
+    {
+        for (size_t i = 0; i + 1 < s.size(); ++i)
+        {
+            if (s[i] == '%')
+            {
+                if (s[i + 1] == '%') { ++i; continue; }
+                if (std::string_view("diuoxXfFeEgGaAcspn").find(s[i + 1]) != std::string_view::npos)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    template <typename Tuple>
+    static std::string format_printf(std::string_view fmt, Tuple &tup)
+    {
+        std::ostringstream os;
+        size_t arg_index = 0;
+        for (size_t i = 0; i < fmt.size(); ++i)
+        {
+            if (fmt[i] == '%')
+            {
+                if (i + 1 < fmt.size() && fmt[i + 1] == '%')
+                {
+                    os << '%';
+                    ++i;
+                    continue;
+                }
+                // find conversion specifier char
+                size_t j = i + 1;
+                while (j < fmt.size() && !std::isalpha(static_cast<unsigned char>(fmt[j])) && fmt[j] != '%')
+                    ++j;
+                if (j >= fmt.size())
+                    break;
+                char spec = fmt[j];
+                os << format_printf_arg(tup, arg_index, spec);
+                ++arg_index;
+                i = j;
+            }
+            else
+            {
+                os << fmt[i];
+            }
+        }
+        return os.str();
+    }
+
+    template <std::size_t I = 0, typename Tuple>
+    static std::string format_printf_arg(Tuple &tup, size_t index, char spec)
+    {
+        if constexpr (I < std::tuple_size_v<std::remove_reference_t<Tuple>>)
+        {
+            if (I == index)
+                return format_one(std::get<I>(tup), spec);
+            return format_printf_arg<I + 1>(tup, index, spec);
+        }
+        return std::string("[missing arg]");
+    }
+
+    template <typename T>
+    static std::string format_one(const T &v, char spec)
+    {
+        std::ostringstream oss;
+        if (spec == 's')
+        {
+            if constexpr (std::is_convertible_v<T, std::string>)
+                oss << v;
+            else if constexpr (std::is_pointer_v<T> && std::is_same_v<std::remove_cv_t<std::remove_pointer_t<T>>, char>)
+                oss << (v ? v : "(null)");
+            else
+                oss << v;
+        }
+        else if (spec == 'd' || spec == 'i')
+        {
+            if constexpr (std::is_integral_v<T>)
+                oss << static_cast<long long>(v);
+            else
+                oss << v;
+        }
+        else if (spec == 'u')
+        {
+            if constexpr (std::is_integral_v<T>)
+                oss << static_cast<std::make_unsigned_t<T>>(v);
+            else
+                oss << v;
+        }
+        else if (spec == 'f' || spec == 'F' || spec == 'e' || spec == 'E' || spec == 'g' || spec == 'G' || spec == 'a' || spec == 'A')
+        {
+            if constexpr (std::is_floating_point_v<T>)
+                oss << v;
+            else
+                oss << v;
+        }
+        else if (spec == 'c')
+        {
+            if constexpr (std::is_integral_v<T>)
+                oss << static_cast<char>(v);
+            else if constexpr (std::is_same_v<T, char>)
+                oss << v;
+            else
+                oss << v;
+        }
+        else if (spec == 'x' || spec == 'X' || spec == 'o')
+        {
+            if constexpr (std::is_integral_v<T>)
+            {
+                std::ostringstream tmp;
+                if (spec == 'o')
+                    tmp << std::oct << v;
+                else
+                {
+                    if (spec == 'X')
+                        tmp << std::uppercase;
+                    tmp << std::hex << static_cast<std::make_unsigned_t<T>>(v);
+                }
+                oss << tmp.str();
+            }
+            else
+                oss << v;
+        }
+        else if (spec == 'p')
+        {
+            if constexpr (std::is_pointer_v<T>)
+                oss << v;
+            else
+                oss << v;
+        }
+        else
+        {
+            oss << v;
+        }
+        return oss.str();
+    }
 
     static const char *level_to_string(LogLevel level)
     {

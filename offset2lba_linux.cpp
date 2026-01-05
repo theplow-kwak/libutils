@@ -13,10 +13,10 @@
 #include <system_error>
 #include <sys/stat.h>
 #include <string>
-#include <utility>         // For std::pair
-#include <fstream>         // For std::ifstream
-#include <dirent.h>        // For opendir, readdir, closedir
-#include <sys/sysmacros.h> // For major(), minor(), makedev()
+#include <utility>
+#include <fstream>
+#include <dirent.h>
+#include <sys/sysmacros.h>
 
 // RAII wrapper for file descriptor to ensure it's closed.
 struct FileDescriptor
@@ -29,21 +29,17 @@ struct FileDescriptor
             close(fd);
     }
 
-    // Prevent copying
     FileDescriptor(const FileDescriptor &) = delete;
     FileDescriptor &operator=(const FileDescriptor &) = delete;
 
     operator int() const { return fd; }
 };
 
-// 디스크 섹터 크기 (일반적으로 512 바이트)
 constexpr int DEFAULT_SECTOR_SIZE = 512;
 
-// Forward declarations
 std::pair<std::vector<char>, struct stat> get_fiemap_data(const char *filepath, off_t offset);
 void calculate_and_print_lba(const struct fiemap *fiemap_data, const struct stat &st, const char *filepath, off_t offset);
 
-// Main function to coordinate LBA calculation.
 void get_lba(fs::path &filepath, off_t offset)
 {
     auto [fiemap_buffer, st] = get_fiemap_data(filepath.generic_string().c_str(), offset);
